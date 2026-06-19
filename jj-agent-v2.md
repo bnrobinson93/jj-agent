@@ -224,7 +224,7 @@ Write answers into the feature file. Confirm with human before executing anythin
     - `jj rebase -r @ -d <parent_change>` — keep orch `@` at tip
     - Run tests
     - Mark [x] in ## Subtasks
-6. Update ## Agents, fill in bookmark in ## PRs
+6. Update ## Agents, fill in bookmark in ## PRs; call `jj-agent done <slot> --keep-change`
 7. If blocked on a decision: ask human in conversation, wait for answer, record in ## Decisions
 8. Repeat until ## Changes and ## Subtasks have no unchecked items
 

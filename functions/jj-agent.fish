@@ -42,17 +42,31 @@ end
 # --- Helpers ---
 
 function _jj_agent_main_root
-    set -l root (jj workspace root 2>/dev/null)
+    set -l current_root (jj workspace root 2>/dev/null)
     or begin
         echo "not in a jj repository" >&2
         return 1
     end
-    set -l base (basename $root)
-    set -l workspace_suffix_re '-(ai[0-9]*|exp|explore)$'
-    if string match -qr -- "$workspace_suffix_re" $base
-        set base (string replace -r -- "$workspace_suffix_re" '' $base)
+
+    # Spawned workspace: pointer written by jj-agent spawn
+    if test -f "$current_root/.jj-agent-root"
+        cat "$current_root/.jj-agent-root"
+        return 0
     end
-    echo (dirname $root)/$base
+
+    # Heuristic: strip last -segment until sibling has agent-state.toml
+    set -l parent (dirname $current_root)
+    set -l candidate (basename $current_root)
+    while string match -q '*-*' $candidate
+        set candidate (string replace -r -- '-[^-]+$' '' $candidate)
+        if test -f "$parent/$candidate/.jj/agent-state.toml"
+            echo "$parent/$candidate"
+            return 0
+        end
+    end
+
+    # No pointer, no state file in sibling — this is the main root
+    echo $current_root
 end
 
 function _jj_agent_state_file
@@ -342,6 +356,9 @@ function _jj_agent_spawn
     jj workspace add "$target_dir"
     or return 1
 
+    # Pointer so _jj_agent_main_root works from any slot name
+    echo "$main_root" > "$target_dir/.jj-agent-root"
+
     cd "$target_dir"
     or return 1
 
@@ -483,20 +500,25 @@ end
 function _jj_agent_done
     if contains -- --help $argv; or contains -- -h $argv
         echo "usage: jj-agent done <slot> [--keep-change]"
+        echo "       jj-agent done --all   [--keep-change]"
         echo ""
         echo "  slot          slot name to clean up"
-        echo "  --keep-change skip confirmation; preserve the JJ change in graph"
+        echo "  --all         clean up all worker slots (skips orch)"
+        echo "  --keep-change skip per-slot confirmation prompt"
         return 0
     end
 
     set -l slot
     set -l keep_change false
+    set -l all false
 
     set -l i 1
     while test $i -le (count $argv)
         switch $argv[$i]
             case --keep-change
                 set keep_change true
+            case --all
+                set all true
             case '*'
                 if test -z "$slot"
                     set slot $argv[$i]
@@ -505,8 +527,9 @@ function _jj_agent_done
         set i (math $i + 1)
     end
 
-    if test -z "$slot"
+    if test -z "$slot" -a "$all" = false
         echo "usage: jj-agent done <slot> [--keep-change]" >&2
+        echo "       jj-agent done --all [--keep-change]" >&2
         return 1
     end
 
@@ -514,6 +537,34 @@ function _jj_agent_done
     or return 1
     set -l state_file (_jj_agent_state_file $main_root)
     set -l feature_md (_jj_agent_feature_file $main_root)
+
+    if test "$all" = true
+        set -l lines (_jj_agent_state_all $state_file 2>/dev/null)
+        if test -z "$lines"
+            echo "no active slots to clean up"
+            return 0
+        end
+        for line in $lines
+            set -l parts (string split \t $line)
+            set -l s $parts[1]
+            if test "$s" = orch
+                echo "skipping orch — run 'jj-agent done orch' to close the orchestrator"
+                continue
+            end
+            _jj_agent_done_slot "$main_root" "$state_file" "$feature_md" "$s" "$keep_change"
+        end
+        return 0
+    end
+
+    _jj_agent_done_slot "$main_root" "$state_file" "$feature_md" "$slot" "$keep_change"
+end
+
+function _jj_agent_done_slot
+    set -l main_root $argv[1]
+    set -l state_file $argv[2]
+    set -l feature_md $argv[3]
+    set -l slot $argv[4]
+    set -l keep_change $argv[5]
 
     set -l workspace (_jj_agent_state_get "$state_file" "$slot" workspace)
     set -l change_id (_jj_agent_state_get "$state_file" "$slot" change_id)
@@ -528,7 +579,7 @@ function _jj_agent_done
         set -l short_id (string sub -l 8 "$change_id")
         read -P "clean up slot $slot ($short_id: $task)? [y/N] " confirm
         if not string match -qi 'y' "$confirm"
-            echo "cancelled"
+            echo "skipped $slot"
             return 0
         end
     end

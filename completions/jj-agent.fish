@@ -20,9 +20,11 @@ complete -c jj-agent -n "not __fish_seen_subcommand_from $subcommands" \
 complete -c jj-agent -n '__fish_seen_subcommand_from spawn' \
     -l agent -d 'Agent CLI to run (default: claude)' -a 'claude codex opencode none'
 
-# done --keep-change flag
+# done flags
 complete -c jj-agent -n '__fish_seen_subcommand_from done' \
     -l keep-change -d 'Skip confirmation, preserve the JJ change'
+complete -c jj-agent -n '__fish_seen_subcommand_from done' \
+    -l all -d 'Clean up all worker slots (skips orch)'
 
 # poll --timeout flag
 complete -c jj-agent -n '__fish_seen_subcommand_from poll' \
