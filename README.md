@@ -16,7 +16,7 @@ Context is piped to the agent as an opening prompt. Your repo's `CLAUDE.md` stay
 
 ### Two entry points
 
-**`jj-orch`** — for features that need an orchestrator. Creates a `FEATURE.md` scaffold, spawns an orchestrator agent that reads the task list and manages workers on your behalf.
+**`jj-orch`** — for features that need an orchestrator. Creates a `.jj/feature-{slug}.md` scaffold, spawns an orchestrator agent that reads the task list and manages workers on your behalf.
 
 **`jj-agent`** — the primitive. Spawn, poll, and clean up individual agent workspaces directly. The orchestrator uses this internally; you can too.
 
@@ -28,14 +28,14 @@ Context is piped to the agent as an opening prompt. Your repo's `CLAUDE.md` stay
 jj-orch "add user roles"
 ```
 
-1. Creates `FEATURE.md` in the repo root (if absent) and opens an orchestrator workspace in tmux
-2. The orchestrator asks you to define `## Changes` and `## Subtasks`, explaining the distinction, and writes your answers into `FEATURE.md`
-3. Once confirmed, it spawns workers for each task, polls for completion, composes results, and keeps `FEATURE.md` current
+1. Creates `.jj/feature-{slug}.md` (if absent) and opens an orchestrator workspace in tmux
+2. The orchestrator asks you to define `## Changes` and `## Subtasks`, explaining the distinction, and writes your answers into the feature file
+3. Once confirmed, it spawns workers for each task, polls for completion, composes results, and keeps it current
 4. When all tasks are checked off, it stops and asks you to review
 
 The orchestrator asks before making architectural decisions. Final diff review is yours.
 
-### FEATURE.md
+### Feature file (.jj/feature-{slug}.md)
 
 The coordination document. You write the goal and task list; the orchestrator tracks progress.
 

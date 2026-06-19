@@ -239,6 +239,18 @@ path.write_text(content)
 "
 end
 
+# Find active feature file (.jj/feature-{slug}.md); returns empty if none found
+function _jj_agent_feature_file
+    set -l main_root $argv[1]
+    set -l files $main_root/.jj/feature-*.md
+    for f in $files
+        if test -f "$f"
+            echo $f
+            return 0
+        end
+    end
+end
+
 # Read a list or scalar from ~/.config/jj-agent/config.toml
 function _jj_agent_config_get
     set -l key $argv[1]
@@ -308,7 +320,7 @@ function _jj_agent_spawn
     set -l repo_name (basename $main_root)
     set -l git_dir "$main_root/.git"
     set -l state_file (_jj_agent_state_file $main_root)
-    set -l feature_md "$main_root/FEATURE.md"
+    set -l feature_md (_jj_agent_feature_file $main_root)
     set -l original_dir "$PWD"
     set -l timestamp (date -u +"%Y-%m-%dT%H:%M:%SZ")
 
@@ -425,7 +437,7 @@ function _jj_agent_done
     set -l main_root (_jj_agent_main_root)
     or return 1
     set -l state_file (_jj_agent_state_file $main_root)
-    set -l feature_md "$main_root/FEATURE.md"
+    set -l feature_md (_jj_agent_feature_file $main_root)
 
     set -l workspace (_jj_agent_state_get "$state_file" "$slot" workspace)
     set -l change_id (_jj_agent_state_get "$state_file" "$slot" change_id)
@@ -482,18 +494,19 @@ slots = data.get('slots', {})
 if not slots:
     print(f'no active agents in {os.environ[\"REPO\"]}')
 else:
-    print(f'{\"SLOT\":<10} {\"CHANGE\":<10} {\"DONE\":<6} TASK')
+    print('| SLOT | CHANGE | DONE | TASK |')
+    print('|------|--------|------|------|')
     for name, v in slots.items():
         short = v.get('change_id', '')[:8]
         workspace = v.get('workspace', '')
-        done = '✓' if (workspace and pathlib.Path(workspace, '.agent-done').exists()) else ' '
+        done = '✓' if (workspace and pathlib.Path(workspace, '.agent-done').exists()) else ''
         task = v.get('task', '')
         if len(task) > 55:
             task = task[:52] + '...'
-        print(f'{name:<10} {short:<10} {done:<6} {task}')
+        print(f'| {name} | {short} | {done} | {task} |')
     print()
-    print(f'{len(slots)} active agent(s) in {os.environ[\"REPO\"]}')
-"
+    print(f'_{len(slots)} active agent(s) in {os.environ[\"REPO\"]}_')
+" | if command -q glow; glow -; else; cat; end
 end
 
 function _jj_agent_status
@@ -529,10 +542,11 @@ for base_str in os.environ['SEARCH_PATHS'].split(':'):
 if not rows:
     print('no active agents')
 else:
-    print(f'{\"REPO\":<18} {\"SLOT\":<10} {\"CHANGE\":<10} {\"DONE\":<6} TASK')
+    print('| REPO | SLOT | CHANGE | DONE | TASK |')
+    print('|------|------|--------|------|------|')
     for repo, slot, change, done, task in rows:
-        print(f'{repo:<18} {slot:<10} {change:<10} {done:<6} {task}')
-"
+        print(f'| {repo} | {slot} | {change} | {done} | {task} |')
+" | if command -q glow; glow -; else; cat; end
 end
 
 function _jj_agent_poll

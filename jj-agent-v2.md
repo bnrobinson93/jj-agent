@@ -17,9 +17,9 @@
 
 **worker** — an agent spawned into a slot to execute a task. Reports done via `.agent-done`.
 
-**orchestrator** — an agent that manages workers: reads `FEATURE.md`, spawns slots, polls, composes results, updates state. Runs in its own `orch-{feature}` slot.
+**orchestrator** — an agent that manages workers: reads `.jj/feature-{slug}.md`, spawns slots, polls, composes results, updates state. Runs in its own `orch-{feature}` slot.
 
-Note: `## Changes` in FEATURE.md refers to the task list section — distinct from a JJ change (the VCS object).
+Note: `## Changes` in the feature file refers to the task list section — distinct from a JJ change (the VCS object).
 
 ---
 
@@ -51,7 +51,7 @@ The orchestrator uses the same commands a human would. That's the point — one 
 
 ## FEATURE.md Integration (new in v2)
 
-If `FEATURE.md` exists in the main repo root, `jj-agent spawn` appends to its `## Agents` table and `jj-agent done` marks the slot as cleaned up.
+If `.jj/feature-{slug}.md` exists, `jj-agent spawn` appends to its `## Agents` table and `jj-agent done` marks the slot as cleaned up.
 
 ```markdown
 ## Agents
@@ -61,11 +61,11 @@ If `FEATURE.md` exists in the main repo root, `jj-agent spawn` appends to its `#
 | 2 | role list component | xyz789gh | feat/roles | done |
 ```
 
-FEATURE.md is the human-readable record. `.jj/agent-state.toml` is the machine-readable state. Both stay in sync via `jj-agent` — neither is source of truth over the other; they serve different consumers.
+`.jj/feature-{slug}.md` is the human-readable record. `.jj/agent-state.toml` is the machine-readable state. Both stay in sync via `jj-agent` — neither is source of truth over the other; they serve different consumers. Both live in `.jj/` so they are never committed.
 
-If no FEATURE.md exists: `jj-agent` works exactly as v1. FEATURE.md integration is opt-in by presence.
+If no `.jj/feature-*.md` exists: `jj-agent` works exactly as v1. Feature integration is opt-in by presence.
 
-### FEATURE.md Structure
+### Feature File Structure
 
 ```markdown
 # Feature: {name}
@@ -94,7 +94,7 @@ One paragraph. What changes for the user.
 - [ ] feat/name → main
 ```
 
-The scaffold ships with `## Changes` and `## Subtasks` empty. The orchestrator's first action is to ask the human to define both sections, explaining the distinction, then write the answers into FEATURE.md and confirm before executing anything.
+The scaffold ships with `## Changes` and `## Subtasks` empty. The orchestrator's first action is to ask the human to define both sections, explaining the distinction, then write the answers into the feature file and confirm before executing anything.
 
 After that: orchestrator reads `## Changes` and `## Subtasks` to find work, writes `## Agents` as it assigns, marks items `[x]` as they're composed. When blocked on a decision, it asks in conversation directly — no file parking. The answer gets recorded in `## Decisions`.
 
@@ -143,7 +143,7 @@ Orchestrator loop: spawn → poll → review diff → accept/iterate/escalate �
 
 Steps 1-7 identical to v1. Additional steps:
 
-**8.** If `FEATURE.md` exists: append slot row to `## Agents` table. Assignment state is tracked there — no marking needed in `## Changes` or `## Subtasks`.
+**8.** If `.jj/feature-*.md` exists: append slot row to `## Agents` table. Assignment state is tracked there — no marking needed in `## Changes` or `## Subtasks`.
 
 **9.** Include sibling context in the opening prompt from other active slots in `agent-state.toml`:
 ```markdown
@@ -179,17 +179,17 @@ The orchestrator agent receives its context as an opening prompt piped on launch
 
 ## Your Job
 Manage this feature end to end. Your tools: jj-agent, jj, shell.
-FEATURE.md is your state. Keep it current.
+The feature file (`.jj/feature-{slug}.md`) is your state. Keep it current.
 
 ## First
-Read FEATURE.md. If ## Changes or ## Subtasks are empty, ask the human to define them. Explain:
+Read the feature file. If ## Changes or ## Subtasks are empty, ask the human to define them. Explain:
 - **## Changes** — each item becomes its own JJ change and PR
 - **## Subtasks** — each item squashes into a named parent change; no separate PR
 
-Write answers into FEATURE.md. Confirm with human before executing anything.
+Write answers into the feature file. Confirm with human before executing anything.
 
 ## Loop
-1. Read FEATURE.md — find unblocked unassigned items in ## Changes and ## Subtasks
+1. Read the feature file — find unblocked unassigned items in ## Changes and ## Subtasks
 2. Spawn workers: `jj-agent spawn <slot> "<task>"`
 3. Poll for completion: `jj-agent poll`
 4. Review diff: `jj diff -r <change_id>`
@@ -210,7 +210,7 @@ Write answers into FEATURE.md. Confirm with human before executing anything.
 
 ## You Own
 - Spawning, monitoring, composing worker output
-- Keeping FEATURE.md current
+- Keeping the feature file current
 
 ## You Do Not Own
 - Architectural decisions (surface to human)
@@ -248,7 +248,7 @@ No-arg call (`ai1`) still works — spawns with empty task, no prompt injection,
 | Addition | ~Lines |
 |----------|--------|
 | `jj-agent poll` subcommand | 30 |
-| FEATURE.md read/write | 60 |
+| Feature file read/write | 60 |
 | Sibling context in opening prompt | 20 |
 | Re-entry guard (already partially in v1) | 10 |
 | `--keep-change` flag on done | 10 |
