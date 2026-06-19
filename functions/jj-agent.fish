@@ -11,6 +11,8 @@ function jj-agent
             _jj_agent_status
         case poll
             _jj_agent_poll $argv[2..]
+        case watch
+            _jj_agent_watch $argv[2..]
         case --help -h help ''
             echo "usage: jj-agent <subcommand> [args]"
             echo ""
@@ -25,6 +27,9 @@ function jj-agent
             echo "      show all agents across all repos"
             echo "  poll [<slot>] [--timeout <secs>]"
             echo "      block until a slot writes .agent-done"
+            echo "  watch [--interval <secs>]"
+            echo "      background watcher; auto-closes tmux windows on completion"
+            echo "      usage: jj-agent watch &"
             echo ""
             echo "  --agent: claude (default), codex, opencode, none"
         case '*'
@@ -183,7 +188,7 @@ function _jj_agent_context_template
     else if test -f "$user_template"
         cat "$user_template"
     else
-        printf '# Task: {task}\n\n## Context\n- Repo: {repo_name}\n- Forked from: {parent_change_id}\n- Spawned: {timestamp}\n\n## Scope\nWork in this workspace only (`{workspace_path}`).\n\n{related_changes}\n## When Finished\nWrite an empty file `.agent-done` to this workspace root.\nDo not exit — wait for the orchestrator or human to review and call `jj-agent done {slot}`.\n'
+        printf '# Task: {task}\n\n## Context\n- Repo: {repo_name}\n- Forked from: {parent_change_id}\n- Spawned: {timestamp}\n\n## Scope\n- **Files**: read anywhere in the repo; write only inside `{workspace_path}`\n- **Network**: read-only calls (GET, curl fetches, API reads) are fine; stop before any call that pushes, posts, or mutates external state — ask first\n\n{related_changes}\n## When Finished\nWrite an empty file `.agent-done` to this workspace root.\nDo not exit — wait for the orchestrator or human to review and call `jj-agent done {slot}`.\n'
     end
 end
 
@@ -372,21 +377,92 @@ function _jj_agent_spawn
         end
     end
 
-    # Write state and update FEATURE.md
+    # Write .claude/settings.json with allowedTools (claude only; others ignore it)
+    # orch slots get full jj + jj-agent + tmux; workers get readonly jj only
+    mkdir -p "$target_dir/.claude"
+    if string match -q 'orch*' $slot
+        printf '{
+  "allowedTools": [
+    "Bash(jj *)",
+    "Bash(jj-agent *)",
+    "Bash(tmux *)",
+    "Bash(git log*)",
+    "Bash(git diff*)",
+    "Bash(git show*)",
+    "Bash(git status*)",
+    "Bash(gh pr view*)",
+    "Bash(gh issue view*)",
+    "Bash(gh api*)",
+    "Bash(curl -s*)",
+    "Bash(curl --silent*)",
+    "Bash(cat *)",
+    "Bash(ls *)",
+    "Bash(find *)",
+    "Bash(grep *)",
+    "Bash(rg *)"
+  ]
+}
+' > "$target_dir/.claude/settings.json"
+    else
+        printf '{
+  "allowedTools": [
+    "Bash(jj diff*)",
+    "Bash(jj log*)",
+    "Bash(jj status*)",
+    "Bash(jj describe*)",
+    "Bash(jj show*)",
+    "Bash(jj file list*)",
+    "Bash(git log*)",
+    "Bash(git diff*)",
+    "Bash(git show*)",
+    "Bash(git status*)",
+    "Bash(gh pr view*)",
+    "Bash(gh issue view*)",
+    "Bash(curl -s*)",
+    "Bash(curl --silent*)",
+    "Bash(cat *)",
+    "Bash(ls *)",
+    "Bash(find *)",
+    "Bash(grep *)",
+    "Bash(rg *)"
+  ]
+}
+' > "$target_dir/.claude/settings.json"
+    end
+
+    # Write state and update feature file
     _jj_agent_state_write "$state_file" "$slot" "$task" "$worker_change_id" "$target_dir" "$agent"
     _jj_agent_feature_spawn "$feature_md" "$slot" "$task" "$worker_change_id"
 
     cd "$original_dir"
 
+    set -l parent_dir (dirname $main_root)
+
     if set -q TMUX
-        set -l tmux_args new-window -c "$target_dir" -n "$slot"
-        if test -e "$git_dir"
-            set tmux_args $tmux_args -e "GIT_DIR=$git_dir"
+        set -l agent_cmd $agent
+        switch $agent
+            case claude
+                set agent_cmd "claude --add-dir '$parent_dir'"
+            case codex
+                set agent_cmd "codex --full-auto"
         end
-        if test "$agent" = none
-            tmux $tmux_args "mise trust 2>/dev/null; $SHELL"
+        if tmux list-windows -F "#{window_name}" | grep -qx "$slot"
+            tmux select-window -t "$slot"
+            if test "$agent" = none
+                tmux send-keys -t "$slot" "cd '$target_dir' && mise trust 2>/dev/null; $SHELL" Enter
+            else
+                tmux send-keys -t "$slot" "cd '$target_dir' && mise trust 2>/dev/null; cat '$tmp_prompt' | $agent_cmd; rm -f '$tmp_prompt'; $SHELL" Enter
+            end
         else
-            tmux $tmux_args "mise trust 2>/dev/null; cat '$tmp_prompt' | $agent; rm -f '$tmp_prompt'; $SHELL"
+            set -l tmux_args new-window -c "$target_dir" -n "$slot"
+            if test -e "$git_dir"
+                set tmux_args $tmux_args -e "GIT_DIR=$git_dir"
+            end
+            if test "$agent" = none
+                tmux $tmux_args "mise trust 2>/dev/null; $SHELL"
+            else
+                tmux $tmux_args "mise trust 2>/dev/null; cat '$tmp_prompt' | $agent_cmd; rm -f '$tmp_prompt'; $SHELL"
+            end
         end
     else
         echo "warning: not in tmux — workspace ready but not opened" >&2
@@ -463,7 +539,11 @@ function _jj_agent_done
     end
 
     if set -q TMUX
-        tmux kill-window -t "$slot" 2>/dev/null
+        if test "$slot" = orch
+            tmux send-keys -t orch "exec $SHELL" Enter
+        else
+            tmux kill-window -t "$slot" 2>/dev/null
+        end
     end
 
     _jj_agent_state_remove "$state_file" "$slot"
@@ -616,4 +696,49 @@ while True:
 
     time.sleep(2)
 "
+end
+
+function _jj_agent_watch
+    if contains -- --help $argv; or contains -- -h $argv
+        echo "usage: jj-agent watch [--interval <secs>]"
+        echo ""
+        echo "  run in background to auto-close tmux windows when slots finish"
+        echo "  workspace and state are preserved — call 'jj-agent done <slot>' to compose"
+        echo ""
+        echo "  --interval  poll interval in seconds (default: 5)"
+        return 0
+    end
+
+    set -l interval 5
+
+    set -l i 1
+    while test $i -le (count $argv)
+        switch $argv[$i]
+            case --interval
+                set i (math $i + 1)
+                set interval $argv[$i]
+        end
+        set i (math $i + 1)
+    end
+
+    set -l main_root (_jj_agent_main_root)
+    or return 1
+    set -l state_file (_jj_agent_state_file $main_root)
+
+    while true
+        if test -f "$state_file"
+            set -l lines (_jj_agent_state_all $state_file 2>/dev/null)
+            for line in $lines
+                set -l parts (string split \t $line)
+                set -l slot $parts[1]
+                set -l workspace $parts[4]
+                if test -n "$workspace"; and test -f "$workspace/.agent-done"; and not test -f "$workspace/.agent-window-closed"
+                    tmux kill-window -t "$slot" 2>/dev/null
+                    touch "$workspace/.agent-window-closed"
+                    echo "[jj-agent] slot $slot done — window closed; run 'jj-agent done $slot' to compose"
+                end
+            end
+        end
+        sleep $interval
+    end
 end

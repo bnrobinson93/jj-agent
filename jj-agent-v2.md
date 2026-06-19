@@ -135,7 +135,24 @@ jj-agent poll 1        # wait for specific slot
 jj-agent poll --timeout 3600   # bail after 1 hour
 ```
 
-Orchestrator loop: spawn → poll → review diff → accept/iterate/escalate → done → repeat.
+### New: `jj-agent watch`
+
+Background watcher — auto-closes tmux windows as soon as `.agent-done` is written. Workspace and state are preserved; the orchestrator still calls `jj-agent done <slot>` when ready to compose.
+
+```fish
+jj-agent watch &           # start in background; run once per orch session
+jj-agent watch --interval 10 &   # slower poll
+```
+
+When a slot finishes:
+1. Watcher kills its tmux window immediately
+2. Watcher touches `.agent-window-closed` (prevents re-trigger)
+3. `jj-agent poll` unblocks (reads `.agent-done`, still present)
+4. Orch composes the change, then calls `jj-agent done <slot>` for full cleanup
+
+This keeps the tmux tab bar clean — finished workers don't linger — while the orch reviews and composes at its own pace.
+
+Orchestrator loop: `watch &` once → spawn → poll → review diff → accept/iterate/escalate → done → repeat.
 
 ---
 
@@ -189,17 +206,20 @@ Read the feature file. If ## Changes or ## Subtasks are empty, ask the human to 
 Write answers into the feature file. Confirm with human before executing anything.
 
 ## Loop
+0. Start background watcher once: `jj-agent watch &`
 1. Read the feature file — find unblocked unassigned items in ## Changes and ## Subtasks
 2. Spawn workers: `jj-agent spawn <slot> "<task>"`
-3. Poll for completion: `jj-agent poll`
+3. Poll for completion: `jj-agent poll` (watcher already closed the window; workspace still exists)
 4. Review diff: `jj diff -r <change_id>`
 5a. ## Changes entry:
+    - `jj restore --changes-in <worker_change> -- .claude/` — strip agent settings from worker change
     - `jj rebase -r <worker_change> -d <stack_tip>` — move into stack
     - `jj rebase -r @ -d <worker_change>` — keep orch `@` at tip so working tree reflects composed state
     - `jj bookmark set feat/name -r <worker_change>` — assign bookmark
     - Run tests (orch `@` is at tip; file tree is current)
     - Mark [x] in ## Changes, update ## PRs
 5b. ## Subtasks entry:
+    - `jj restore --changes-in <worker_change> -- .claude/` — strip agent settings first
     - `jj squash --from <worker_change> --into <parent_change>` — fold into parent
     - `jj rebase -r @ -d <parent_change>` — keep orch `@` at tip
     - Run tests

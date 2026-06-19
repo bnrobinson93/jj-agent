@@ -1,4 +1,4 @@
-set -l subcommands spawn done list status poll
+set -l subcommands spawn done list status poll watch
 
 complete -c jj-agent -f
 
@@ -31,3 +31,9 @@ complete -c jj-agent -n '__fish_seen_subcommand_from poll' \
 # subcommand descriptions
 complete -c jj-agent -n "not __fish_seen_subcommand_from $subcommands" \
     -a poll -d 'Block until any active slot writes .agent-done'
+complete -c jj-agent -n "not __fish_seen_subcommand_from $subcommands" \
+    -a watch -d 'Background watcher; auto-closes tmux windows on completion'
+
+# watch --interval flag
+complete -c jj-agent -n '__fish_seen_subcommand_from watch' \
+    -l interval -d 'Poll interval in seconds (default: 5)'
