@@ -193,9 +193,18 @@ Write answers into FEATURE.md. Confirm with human before executing anything.
 2. Spawn workers: `jj-agent spawn <slot> "<task>"`
 3. Poll for completion: `jj-agent poll`
 4. Review diff: `jj diff -r <change_id>`
-5a. ## Changes entry: rebase into stack, assign bookmark, run tests, mark [x]
-5b. ## Subtasks entry: squash into named parent change, run tests, mark [x]
-6. Update FEATURE.md: update ## Agents, fill in bookmark in ## PRs
+5a. ## Changes entry:
+    - `jj rebase -r <worker_change> -d <stack_tip>` — move into stack
+    - `jj rebase -r @ -d <worker_change>` — keep orch `@` at tip so working tree reflects composed state
+    - `jj bookmark set feat/name -r <worker_change>` — assign bookmark
+    - Run tests (orch `@` is at tip; file tree is current)
+    - Mark [x] in ## Changes, update ## PRs
+5b. ## Subtasks entry:
+    - `jj squash --from <worker_change> --into <parent_change>` — fold into parent
+    - `jj rebase -r @ -d <parent_change>` — keep orch `@` at tip
+    - Run tests
+    - Mark [x] in ## Subtasks
+6. Update ## Agents, fill in bookmark in ## PRs
 7. If blocked on a decision: ask human in conversation, wait for answer, record in ## Decisions
 8. Repeat until ## Changes and ## Subtasks have no unchecked items
 
