@@ -55,10 +55,10 @@ If `FEATURE.md` exists in the main repo root, `jj-agent spawn` appends to its `#
 
 ```markdown
 ## Agents
-| slot | task | change_id | status |
-|------|------|-----------|--------|
-| 1 | implement RBAC types | abc123de | in-progress |
-| 2 | role list component | xyz789gh | done |
+| slot | task | change_id | bookmark | status |
+|------|------|-----------|----------|--------|
+| 1 | implement RBAC types | abc123de | | in-progress |
+| 2 | role list component | xyz789gh | feat/roles | done |
 ```
 
 FEATURE.md is the human-readable record. `.jj/agent-state.toml` is the machine-readable state. Both stay in sync via `jj-agent` — neither is source of truth over the other; they serve different consumers.
@@ -143,7 +143,7 @@ Orchestrator loop: spawn → poll → review diff → accept/iterate/escalate �
 
 Steps 1-7 identical to v1. Additional steps:
 
-**8.** If `FEATURE.md` exists: append slot row to `## Agents` table, mark item as assigned in `## Changes` or `## Subtasks`.
+**8.** If `FEATURE.md` exists: append slot row to `## Agents` table. Assignment state is tracked there — no marking needed in `## Changes` or `## Subtasks`.
 
 **9.** Include sibling context in the opening prompt from other active slots in `agent-state.toml`:
 ```markdown

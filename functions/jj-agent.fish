@@ -204,7 +204,7 @@ slot = os.environ['SLOT']
 task = os.environ['TASK']
 cid = os.environ['CHANGE_ID'][:8]
 
-new_row = f'| {slot} | {task} | {cid} | in-progress |\n'
+new_row = f'| {slot} | {task} | {cid} | | in-progress |\n'
 
 # Update existing row or append to ## Agents section
 slot_re = re.compile(rf'^\| {re.escape(slot)} \|[^\n]*\n', re.MULTILINE)
@@ -233,7 +233,7 @@ content = path.read_text()
 slot = os.environ['SLOT']
 
 # Mark in-progress → done for this slot's row
-row_re = re.compile(rf'(\| {re.escape(slot)} \|[^|]*\|[^|]*\|)\s*in-progress\s*\|', re.MULTILINE)
+row_re = re.compile(rf'(\| {re.escape(slot)} \|[^|]*\|[^|]*\|[^|]*\|)\s*in-progress\s*\|', re.MULTILINE)
 content = row_re.sub(r'\1 done |', content)
 path.write_text(content)
 "
