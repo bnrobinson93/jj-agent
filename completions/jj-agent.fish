@@ -2,6 +2,10 @@ set -l subcommands spawn done list status poll
 
 complete -c jj-agent -f
 
+# Help
+complete -c jj-agent -n "not __fish_seen_subcommand_from $subcommands" \
+    -l help -s h -d 'Show help'
+
 # Subcommands
 complete -c jj-agent -n "not __fish_seen_subcommand_from $subcommands" \
     -a spawn -d 'Create workspace, inject task, launch agent'
@@ -14,7 +18,7 @@ complete -c jj-agent -n "not __fish_seen_subcommand_from $subcommands" \
 
 # spawn --agent flag
 complete -c jj-agent -n '__fish_seen_subcommand_from spawn' \
-    -l agent -d 'Agent CLI to run (default: claude)'
+    -l agent -d 'Agent CLI to run (default: claude)' -a 'claude codex opencode none'
 
 # done --keep-change flag
 complete -c jj-agent -n '__fish_seen_subcommand_from done' \

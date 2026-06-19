@@ -11,12 +11,25 @@ function jj-agent
             _jj_agent_status
         case poll
             _jj_agent_poll $argv[2..]
-        case ''
-            echo "usage: jj-agent <spawn|done|list|status|poll>" >&2
-            return 1
+        case --help -h help ''
+            echo "usage: jj-agent <subcommand> [args]"
+            echo ""
+            echo "subcommands:"
+            echo "  spawn <slot> \"<task>\" [--agent <cmd>] [--prompt-file <path>]"
+            echo "      create workspace, inject task, launch agent"
+            echo "  done <slot> [--keep-change]"
+            echo "      clean up workspace and kill tmux window"
+            echo "  list"
+            echo "      show active agents for current repo"
+            echo "  status"
+            echo "      show all agents across all repos"
+            echo "  poll [<slot>] [--timeout <secs>]"
+            echo "      block until a slot writes .agent-done"
+            echo ""
+            echo "  --agent: claude (default), codex, opencode, none"
         case '*'
             echo "unknown subcommand: $subcmd" >&2
-            echo "usage: jj-agent <spawn|done|list|status|poll>" >&2
+            echo "run 'jj-agent --help' for usage" >&2
             return 1
     end
 end
@@ -162,7 +175,7 @@ for name, v in siblings:
 " 2>/dev/null
 end
 
-function _jj_agent_claude_md_template
+function _jj_agent_context_template
     set -l repo_template "$argv[1]/.jj/agent-template.md"
     set -l user_template "$HOME/.config/jj-agent/template.md"
     if test -f "$repo_template"
@@ -170,7 +183,7 @@ function _jj_agent_claude_md_template
     else if test -f "$user_template"
         cat "$user_template"
     else
-        printf '# Task: {task}\n\n## Context\n- Repo: {repo_name}\n- Forked from: {parent_change_id}\n- Spawned: {timestamp}\n\n## Scope\nWork in this workspace only (`{workspace_path}`).\n\n## Do Not Touch\n- `CLAUDE.md` / `AGENTS.md` (these files)\n\n{related_changes}\n## When Finished\nWrite an empty file `.agent-done` to this workspace root.\nDo not exit — wait for the orchestrator or human to review and call `jj-agent done {slot}`.\n'
+        printf '# Task: {task}\n\n## Context\n- Repo: {repo_name}\n- Forked from: {parent_change_id}\n- Spawned: {timestamp}\n\n## Scope\nWork in this workspace only (`{workspace_path}`).\n\n{related_changes}\n## When Finished\nWrite an empty file `.agent-done` to this workspace root.\nDo not exit — wait for the orchestrator or human to review and call `jj-agent done {slot}`.\n'
     end
 end
 
@@ -249,10 +262,20 @@ end
 # --- Subcommands ---
 
 function _jj_agent_spawn
+    if contains -- --help $argv; or contains -- -h $argv
+        echo "usage: jj-agent spawn <slot> \"<task>\" [--agent <cmd>] [--prompt-file <path>]"
+        echo ""
+        echo "  slot          name for this workspace (e.g. 1, auth, ui)"
+        echo "  task          description passed as opening prompt to the agent"
+        echo "  --agent       claude (default), codex, opencode, none"
+        echo "  --prompt-file override built-in template; file content piped to agent"
+        return 0
+    end
+
     set -l agent claude
     set -l slot
     set -l task
-    set -l claude_md_file ""
+    set -l prompt_file ""
 
     set -l i 1
     while test $i -le (count $argv)
@@ -260,9 +283,9 @@ function _jj_agent_spawn
             case --agent
                 set i (math $i + 1)
                 set agent $argv[$i]
-            case --claude-md-file
+            case --prompt-file
                 set i (math $i + 1)
-                set claude_md_file $argv[$i]
+                set prompt_file $argv[$i]
             case '*'
                 if test -z "$slot"
                     set slot $argv[$i]
@@ -274,7 +297,7 @@ function _jj_agent_spawn
     end
 
     if test -z "$slot"
-        echo "usage: jj-agent spawn <slot> [--agent <cmd>] [--claude-md-file <path>] \"<task>\"" >&2
+        echo "usage: jj-agent spawn <slot> [--agent <cmd>] [--prompt-file <path>] \"<task>\"" >&2
         return 1
     end
 
@@ -314,34 +337,28 @@ function _jj_agent_spawn
 
     set -l worker_change_id (jj log -r @ --no-graph -T 'change_id')
 
-    # Primary context file per agent; symlink the other name for cross-tool compat
-    # codex reads AGENTS.md; claude/opencode read CLAUDE.md; symlink covers both
-    set -l primary_ctx CLAUDE.md
-    set -l symlink_ctx AGENTS.md
-    if test "$agent" = codex
-        set primary_ctx AGENTS.md
-        set symlink_ctx CLAUDE.md
-    end
-
-    if test -n "$claude_md_file" -a -f "$claude_md_file"
-        cp "$claude_md_file" "$target_dir/$primary_ctx"
-    else
-        set -l sibling_ctx (_jj_agent_sibling_context "$state_file" "$slot")
-        if test -n "$sibling_ctx"
-            set sibling_ctx "$sibling_ctx\n\n"
+    # Build prompt to pipe to agent; written to /tmp (never touches workspace)
+    set -l tmp_prompt "/tmp/jj-agent-$repo_name-$slot"
+    if test "$agent" != none
+        if test -n "$prompt_file" -a -f "$prompt_file"
+            cp "$prompt_file" "$tmp_prompt"
+        else
+            set -l sibling_ctx (_jj_agent_sibling_context "$state_file" "$slot")
+            if test -n "$sibling_ctx"
+                set sibling_ctx "$sibling_ctx\n\n"
+            end
+            set -l tmpl (_jj_agent_context_template $main_root)
+            printf '%s' "$tmpl" \
+                | string replace -a '{task}' "$task" \
+                | string replace -a '{repo_name}' "$repo_name" \
+                | string replace -a '{parent_change_id}' "$parent_change_id" \
+                | string replace -a '{workspace_path}' "$target_dir" \
+                | string replace -a '{timestamp}' "$timestamp" \
+                | string replace -a '{slot}' "$slot" \
+                | string replace -a '{related_changes}' "$sibling_ctx" \
+                > "$tmp_prompt"
         end
-        set -l tmpl (_jj_agent_claude_md_template $main_root)
-        set -l claude_md (printf '%s' "$tmpl" \
-            | string replace -a '{task}' "$task" \
-            | string replace -a '{repo_name}' "$repo_name" \
-            | string replace -a '{parent_change_id}' "$parent_change_id" \
-            | string replace -a '{workspace_path}' "$target_dir" \
-            | string replace -a '{timestamp}' "$timestamp" \
-            | string replace -a '{slot}' "$slot" \
-            | string replace -a '{related_changes}' "$sibling_ctx")
-        printf '%s' "$claude_md" > "$target_dir/$primary_ctx"
     end
-    ln -sf "$primary_ctx" "$target_dir/$symlink_ctx"
 
     # Write state and update FEATURE.md
     _jj_agent_state_write "$state_file" "$slot" "$task" "$worker_change_id" "$target_dir" "$agent"
@@ -354,13 +371,18 @@ function _jj_agent_spawn
         if test -e "$git_dir"
             set tmux_args $tmux_args -e "GIT_DIR=$git_dir"
         end
-        tmux $tmux_args "mise trust 2>/dev/null; $agent; $SHELL"
+        if test "$agent" = none
+            tmux $tmux_args "mise trust 2>/dev/null; $SHELL"
+        else
+            tmux $tmux_args "mise trust 2>/dev/null; cat '$tmp_prompt' | $agent; rm -f '$tmp_prompt'; $SHELL"
+        end
     else
-        echo "warning: not in tmux — agent not started" >&2
+        echo "warning: not in tmux — workspace ready but not opened" >&2
         echo "  workspace: $target_dir"
-        echo "  run: cd $target_dir && $agent"
-        if test -f "$target_dir/$primary_ctx"
-            echo "  context: $target_dir/$primary_ctx (+ $symlink_ctx symlink)"
+        if test "$agent" != none
+            echo "  run: cd $target_dir && cat '$tmp_prompt' | $agent"
+        else
+            echo "  run: cd $target_dir"
         end
         if test -f "$feature_md"
             echo "  feature:  $feature_md"
@@ -371,6 +393,14 @@ function _jj_agent_spawn
 end
 
 function _jj_agent_done
+    if contains -- --help $argv; or contains -- -h $argv
+        echo "usage: jj-agent done <slot> [--keep-change]"
+        echo ""
+        echo "  slot          slot name to clean up"
+        echo "  --keep-change skip confirmation; preserve the JJ change in graph"
+        return 0
+    end
+
     set -l slot
     set -l keep_change false
 
@@ -426,6 +456,8 @@ function _jj_agent_done
 
     _jj_agent_state_remove "$state_file" "$slot"
     _jj_agent_feature_done "$feature_md" "$slot"
+    set -l repo_name (basename $main_root)
+    rm -f "/tmp/jj-agent-$repo_name-$slot"
 
     echo "slot $slot cleaned up"
 end
@@ -504,6 +536,14 @@ else:
 end
 
 function _jj_agent_poll
+    if contains -- --help $argv; or contains -- -h $argv
+        echo "usage: jj-agent poll [<slot>] [--timeout <secs>]"
+        echo ""
+        echo "  slot       wait for specific slot (default: any active slot)"
+        echo "  --timeout  bail after N seconds (default: wait forever)"
+        return 0
+    end
+
     set -l target_slot ""
     set -l timeout_secs 0
 

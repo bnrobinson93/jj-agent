@@ -1,4 +1,16 @@
 function jj-orch
+    if contains -- --help $argv; or contains -- -h $argv
+        echo "usage: jj-orch [feature_name] [--agent <cmd>]"
+        echo ""
+        echo "  feature_name  name of feature to orchestrate; slugified to orch-<name>"
+        echo "                omit to spawn a blank orch workspace with no task context"
+        echo "  --agent       claude (default), codex, opencode, none"
+        echo ""
+        echo "  creates FEATURE.md scaffold if absent, then spawns orchestrator"
+        echo "  with task context piped as opening prompt"
+        return 0
+    end
+
     set -l agent claude
     set -l feature_name
 
@@ -35,19 +47,19 @@ function jj-orch
 
     # Create FEATURE.md scaffold if absent
     if not test -f "$feature_md"
-        printf '# Feature: %s\nstarted: %s\n\n## Goal\n\n\n## Tasks\n- [ ] \n\n## Agents\n| slot | task | change_id | status |\n|------|------|-----------|--------|\n\n## Decisions\n\n## Needs Human\n\n## PRs\n' \
+        printf '# Feature: %s\nstarted: %s\n\n## Goal\n\n\n## Changes\n\n## Subtasks\n\n## Agents\n| slot | task | change_id | bookmark | status |\n|------|------|-----------|----------|--------|\n\n## Decisions\n\n## PRs\n- [ ] \n' \
             "$feature_name" "$timestamp" > "$feature_md"
-        echo "created $feature_md — fill in ## Tasks before the orchestrator starts"
+        echo "created $feature_md"
     else
         echo "using existing $feature_md"
     end
 
-    # Build orchestrator CLAUDE.md in a temp file; spawn copies it into the workspace
+    # Build orchestrator opening prompt in a temp file; piped to agent on launch
     set -l tmpfile (mktemp /tmp/jj-orch-XXXXXX.md)
-    printf '# Orchestrator: %s\n\nRead FEATURE.md. Execute the ## Tasks list end to end.\n\n## Loop\n1. Read ## Tasks — find unblocked, unassigned items\n2. `jj-agent spawn <slot> "<task>"` — spawn worker\n3. `jj-agent poll` — wait for .agent-done\n4. `jj diff -r <change_id>` — review worker output\n5. If good: compose (`jj squash`/`jj rebase`); mark task [x]; `jj-agent done <slot>`\n6. If needs iteration: give worker feedback in its tmux window, re-poll\n7. If blocked on decision: write to FEATURE.md ## Needs Human, ask human in this conversation, wait for answer, record in ## Decisions, continue\n8. Repeat until no unchecked tasks remain\n\n## You Do Not Own\n- Architecture decisions → ask human\n- Final review before PR creation → human does this\n- Cross-repo dependency order changes → ask human\n\n## When a Decision Reveals a Codebase Pattern\nWrite the pattern to memory.md (if present). Write the feature choice to FEATURE.md ## Decisions.\n\n## When Done\nTell human: "All tasks complete. Ready for final review." Then stop.\n' \
+    printf '# Orchestrator: %s\n\n## First: Define the Task List\n\nBefore doing anything else, read FEATURE.md and ask the human to fill in ## Changes and ## Subtasks.\n\nExplain the distinction:\n- **## Changes** — each item becomes its own JJ change and pull request\n- **## Subtasks** — each item gets squashed into a named parent change (no separate PR); use for tests, docs, or small follow-ups\n\nWait for the human to confirm the task list before proceeding. Write their answers directly into FEATURE.md.\n\n## Loop (after task list confirmed)\n1. Read ## Changes and ## Subtasks — find unblocked, unassigned items\n2. `jj-agent spawn <slot> "<task>"` — spawn worker\n3. `jj-agent poll` — wait for .agent-done\n4. `jj diff -r <change_id>` — review worker output\n5a. ## Changes entry: rebase into stack, assign bookmark, run tests, mark [x], update ## PRs\n5b. ## Subtasks entry: squash into named parent change, run tests, mark [x]\n6. Update ## Agents; call `jj-agent done <slot>`\n7. If needs iteration: give worker feedback in its tmux window, re-poll\n8. If blocked on decision: ask human in this conversation, wait for answer, record in ## Decisions, continue\n9. Repeat until ## Changes and ## Subtasks have no unchecked items\n\n## You Do Not Own\n- Architecture decisions → ask human\n- Final review before PR creation → human does this\n- Cross-repo dependency order changes → ask human\n\n## When a Decision Reveals a Codebase Pattern\nWrite the pattern to memory.md (if present). Write the feature choice to FEATURE.md ## Decisions.\n\n## When Done\nTell human: "All tasks complete. Ready for final review." Then stop.\n' \
         "$feature_name" > "$tmpfile"
 
-    jj-agent spawn "$slot" "$feature_name" --agent "$agent" --claude-md-file "$tmpfile"
+    jj-agent spawn "$slot" "$feature_name" --agent "$agent" --prompt-file "$tmpfile"
     set -l spawn_status $status
 
     rm -f "$tmpfile"
