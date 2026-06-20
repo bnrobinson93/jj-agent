@@ -459,9 +459,13 @@ function _jj_agent_spawn
         set -l agent_cmd $agent
         switch $agent
             case claude
-                set agent_cmd "claude --add-dir '$parent_dir'"
+                set agent_cmd "claude --model claude-opus-4-8 --add-dir '$parent_dir'"
             case codex
-                set agent_cmd "codex --full-auto"
+                if string match -q 'orch*' $slot
+                    set agent_cmd "codex -m gpt-5.4"
+                else
+                    set agent_cmd "codex -m gpt-5.5"
+                end
         end
         if tmux list-windows -F "#{window_name}" | grep -qx "$slot"
             tmux select-window -t "$slot"
