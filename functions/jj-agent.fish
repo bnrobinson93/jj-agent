@@ -589,7 +589,25 @@ function _jj_agent_done_slot
     end
 
     if test -d "$workspace"
-        jj workspace forget "$workspace" 2>/dev/null
+        # `jj workspace forget` takes a workspace NAME, not a path. The workspace
+        # name is the basename used at `jj workspace add` time ($main_root-$slot).
+        set -l ws_name (basename "$workspace")
+
+        # The workspace's working-copy commit is a throwaway scratch commit that
+        # holds the `.jj-agent-root` pointer (jj auto-tracks it). Once the real
+        # change is bookmarked and rebased into the stack, this scratch commit is
+        # left as an orphan head and clutters the log. Capture it (+ any bookmark)
+        # before forgetting so we can abandon it — but only when it carries no
+        # bookmark, so a not-yet-rebased real change is never dropped.
+        set -l ws_at (jj --repository "$main_root" log -r "$ws_name@" --no-graph -T 'change_id' 2>/dev/null)
+        set -l ws_bm (jj --repository "$main_root" log -r "$ws_name@" --no-graph -T 'bookmarks' 2>/dev/null)
+
+        jj --repository "$main_root" workspace forget "$ws_name" 2>/dev/null
+
+        if test -n "$ws_at" -a -z "$ws_bm"
+            jj --repository "$main_root" abandon "$ws_at" 2>/dev/null
+        end
+
         rm -rf "$workspace"
     end
 
